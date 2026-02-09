@@ -156,6 +156,27 @@ def correct_rating_for_ehydro_bathymetry(huc_dir, huc, bathy_file_ehydro):
         # src_df = src_df.drop_duplicates(subset=['HydroID', 'Stage'], keep='first').reset_index(drop=True)
         src_df.to_csv(src, index=False)
 
+        # Update hydro_table
+        ht_path = join(huc_dir, 'branches', str(branch), f'hydroTable_{branch}.csv')
+        ht_df = pd.read_csv(ht_path, low_memory=False)
+
+        ht_keyed = ht_df.set_index(['HydroID', 'feature_id', 'stage'])
+        src_keyed = src_df.set_index(['HydroID', 'feature_id', 'Stage'])
+
+        # Update only where (id1, id2, stage) matches in both
+        ht_keyed['Volume (m3)'].update(src_keyed['Volume (m3)'])
+        ht_keyed['SurfaceArea (m2)'].update(src_keyed['SurfaceArea (m2)'])
+        ht_keyed['BedArea (m2)'].update(src_keyed['BedArea (m2)'])
+        ht_keyed['WettedPerimeter (m)'].update(src_keyed['WettedPerimeter (m)'])
+        ht_keyed['WetArea (m2)'].update(src_keyed['WetArea (m2)'])
+        ht_keyed['HydraulicRadius (m)'].update(src_keyed['HydraulicRadius (m)'])
+        ht_keyed['discharge_cms'].update(src_keyed['Discharge (m3s-1)'])
+        # Put the key columns back as normal columns if you want
+        ht_df = ht_keyed.reset_index()
+
+        # Write ht back to file
+        ht_df.to_csv(ht_path, index=False)
+
     return log_text
 
 
@@ -305,20 +326,28 @@ def correct_rating_for_ai_bathymetry(huc_dir, huc, strm_order, bathy_file_aibase
 
             src_df.to_csv(src, index=False)
 
-        else:
-            # src_df = src_df.merge(aib_df, on='feature_id', how='left', validate='many_to_one')
-            # # checked
+            # Update hydro_table
+            ht_path = join(huc_dir, 'branches', str(branch), f'hydroTable_{branch}.csv')
+            ht_df = pd.read_csv(ht_path, low_memory=False)
 
-            # src_df.loc[src_df["Bathymetry_source_x"].isna(), ["missing_xs_area_m2_x"]] = src_df[
-            #     "missing_xs_area_m2_y"
-            # ]
-            # src_df.loc[src_df["Bathymetry_source_x"].isna(), ["missing_wet_perimeter_m_x"]] = src_df[
-            #     "missing_wet_perimeter_m_y"
-            # ]
-            # src_df.loc[src_df["Bathymetry_source_x"].isna(), ["Bathymetry_source_x"]] = src_df[
-            #     "Bathymetry_source_y"
-            # ]
-            # checked
+            ht_keyed = ht_df.set_index(['HydroID', 'feature_id', 'stage'])
+            src_keyed = src_df.set_index(['HydroID', 'feature_id', 'Stage'])
+
+            # Update only where (id1, id2, stage) matches in both
+            ht_keyed['Volume (m3)'].update(src_keyed['Volume (m3)'])
+            ht_keyed['BedArea (m2)'].update(src_keyed['BedArea (m2)'])
+            ht_keyed['SurfaceArea (m2)'].update(src_keyed['SurfaceArea (m2)'])
+            ht_keyed['WettedPerimeter (m)'].update(src_keyed['WettedPerimeter (m)'])
+            ht_keyed['WetArea (m2)'].update(src_keyed['WetArea (m2)'])
+            ht_keyed['HydraulicRadius (m)'].update(src_keyed['HydraulicRadius (m)'])
+            ht_keyed['discharge_cms'].update(src_keyed['Discharge (m3s-1)'])
+            # Put the key columns back as normal columns if you want
+            ht_df = ht_keyed.reset_index()
+
+            # Write ht back to file
+            ht_df.to_csv(ht_path, index=False)
+
+        else:
             src_df = src_df.merge(aib_df, on='feature_id', how='left', validate='many_to_one')
 
             mask = src_df["Bathymetry_source_x"].isna()
@@ -387,6 +416,27 @@ def correct_rating_for_ai_bathymetry(huc_dir, huc, strm_order, bathy_file_aibase
             src_df['Discharge (m3s-1)_bathymetryAdjusted'] = discharge_bathymetry2
 
             src_df.to_csv(src, index=False)
+
+            # Update hydro_table
+            ht_path = join(huc_dir, 'branches', str(branch), f'hydroTable_{branch}.csv')
+            ht_df = pd.read_csv(ht_path, low_memory=False)
+
+            ht_keyed = ht_df.set_index(['HydroID', 'feature_id', 'stage'])
+            src_keyed = src_df.set_index(['HydroID', 'feature_id', 'Stage'])
+
+            # Update only where (id1, id2, stage) matches in both
+            ht_keyed['Volume (m3)'].update(src_keyed['Volume (m3)'])
+            ht_keyed['BedArea (m2)'].update(src_keyed['BedArea (m2)'])
+            ht_keyed['SurfaceArea (m2)'].update(src_keyed['SurfaceArea (m2)'])
+            ht_keyed['WettedPerimeter (m)'].update(src_keyed['WettedPerimeter (m)'])
+            ht_keyed['WetArea (m2)'].update(src_keyed['WetArea (m2)'])
+            ht_keyed['HydraulicRadius (m)'].update(src_keyed['HydraulicRadius (m)'])
+            ht_keyed['discharge_cms'].update(src_keyed['Discharge (m3s-1)'])
+            # Put the key columns back as normal columns if you want
+            ht_df = ht_keyed.reset_index()
+
+            # Write ht back to file
+            ht_df.to_csv(ht_path, index=False)
 
     return log_text
 

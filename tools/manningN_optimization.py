@@ -18,8 +18,10 @@ import pandas as pd
 from run_test_case_mannN_optz_func import (
     alpha_test,
     correct_nonmonotonic_src,
-    filter_longitudinal_discharge_jitters,
     list_all_test_cases,
+    src_bankfull_lookup,
+    subdiv_geometry,
+    subdiv_mannings_eq,
 )
 from scipy.optimize import NonlinearConstraint, differential_evolution, minimize
 from tools_shared_variables import MAGNITUDE_DICT, TEST_CASES_DIR
@@ -49,10 +51,10 @@ def initialize_mannN(fim_dir, huc, mannN_file):
     mannN_df = mannN_data_df_huc.drop_duplicates(subset=['feature_id'], keep='first')
     mannN_df.index = range(len(mannN_df))
     mannN_df = mannN_df.drop(columns=['ID', 'order_'])
-    mannN_df = mannN_df.rename(columns={'channel_n': 'ManningN'})
+    mannN_df = mannN_df.rename(columns={'channel_n': 'MannN_channel'})  # 'ManningN'})
     mannN_df = mannN_df.rename(columns={'overbank_n': 'MannN_obank'})
 
-    initial_mannN_df = mannN_df[['feature_id', 'ManningN', 'MannN_obank']]
+    initial_mannN_df = mannN_df[['feature_id', 'MannN_channel', 'MannN_obank']]
 
     return initial_mannN_df
 
@@ -82,29 +84,28 @@ def read_initial_hydroTables(fim_dir, huc):
         ht_df_ini = pd.read_csv(ht_all_branches_path[pth], dtype={'feature_id': 'int64'}, low_memory=False)
         ht_df_ini["branch_id"] = branch
 
-        src_df = pd.read_csv(src_all_branches_path[pth], dtype={'feature_id': 'int64'}, low_memory=False)
-        src_geo_df = src_df[
-            [
-                'WetArea_chan (m2)',
-                'HydraulicRadius_chan (m)',
-                'WetArea_obank (m2)',
-                'HydraulicRadius_obank (m)',
-                'bankfull_proxy',
-            ]
-        ]
+        # src_df = pd.read_csv(src_all_branches_path[pth], dtype={'feature_id': 'int64'}, low_memory=False)
+        # src_geo_df = src_df[
+        #     [
+        #         'WetArea_chan (m2)',
+        #         'HydraulicRadius_chan (m)',
+        #         'WetArea_obank (m2)',
+        #         'HydraulicRadius_obank (m)',
+        #         'bankfull_proxy',
+        #     ]
+        # ]
 
-        ht_df = pd.concat([ht_df_ini, src_geo_df], axis=1)
-        ht_df['branch'] = branch
-        initial_hydroTables_ls.append(ht_df)
+        # ht_df = pd.concat([ht_df_ini, src_geo_df], axis=1)
+        # ht_df['branch'] = branch
+        initial_hydroTables_ls.append(ht_df_ini)
 
     return initial_hydroTables_ls
 
 
 # *********************************************************
-def recalculate_Q_with_mannN_and_update_hydroTables_ls(
-    hydroTables_ls, mannN_ch_values, mannN_ob_values, feature_ids, fim_dir
+def recalculate_Q_with_newMannN_and_update_hydroTables_ls(
+    hydroTables_ls, mannN_ch_values, mannN_ob_values, feature_ids, df_bflows, huc
 ):
-
     updated_hydroTables_ls = []
     for ht_df in hydroTables_ls:
         if 'manningN_ch_optz' in ht_df.columns:
@@ -116,11 +117,42 @@ def recalculate_Q_with_mannN_and_update_hydroTables_ls(
                     'optzN_on',
                     'overbank_n',
                     'channel_n',
-                    'discharge_cms',
+                    # 'discharge_cms',
+                    ## Bankfull columns
+                    # 'HydroID',
+                    'bankfull_flow',
+                    'Stage_bankfull',
+                    'bankfull_proxy',
+                    'BedArea_bankfull',
+                    'Volume_bankfull',
+                    'HRadius_bankfull',
+                    'SurfArea_bankfull',
+                    ## Subdivision columns
+                    'subdiv_applied',
+                    'Discharge (m3s-1)_subdiv',
+                    'Volume_chan (m3)',
+                    'Volume_obank (m3)',
+                    'BedArea_chan (m2)',
+                    'BedArea_obank (m2)',
+                    'WettedPerimeter_chan (m)',
+                    'WettedPerimeter_obank (m)',
                 ],
                 axis=1,
+                errors='ignore',
             )
 
+        # Calculate bankfull columns
+        branch_id = int(ht_df["branch_id"][0])
+        ht_df = src_bankfull_lookup(
+            ht_df, df_bflows, huc, branch_id  # df_src src_full_filename,  # bankfull_flow_filepath
+        )
+
+        # Calculate subdiv geometry variables
+        ht_df = subdiv_geometry(ht_df)
+
+        ## Merge (crosswalk) the df of Manning's n with the SRC df
+        ##   (using the channel/fplain delination in the 'Stage_bankfull')
+        # df_src = df_src.merge(df_mann, how='left', on='feature_id')
         # Create a temporary dataframe with updated ManningN values
         temp_mannN_df = pd.DataFrame(
             {
@@ -133,30 +165,28 @@ def recalculate_Q_with_mannN_and_update_hydroTables_ls(
         # Merge the updated ManningN values
         ht_df = ht_df.merge(temp_mannN_df, how='left', on='feature_id')
 
-        # Calculations of channel and overbank discharges
-        Q_ch = (
-            ht_df['WetArea_chan (m2)']
-            * pow(ht_df['HydraulicRadius_chan (m)'], 2.0 / 3)
-            * pow(ht_df['SLOPE'], 0.5)
-            / ht_df['manningN_ch_optz']
-        )
-        Q_ob = (
-            ht_df['WetArea_obank (m2)']
-            * pow(ht_df['HydraulicRadius_obank (m)'], 2.0 / 3)
-            * pow(ht_df['SLOPE'], 0.5)
-            / ht_df['manningN_ob_optz']
-        )
-        ht_df['Discharge(cms)_optzN'] = Q_ob + Q_ch
+        ## Check if there are any missing data in the 'Stage_bankfull' column
+        ##   (these are locations where subdiv will not be applied)
+        ht_df['subdiv_applied'] = np.where(
+            ht_df['Stage_bankfull'].isnull(), False, True
+        )  # create field to identify where vmann is applied (True=yes; False=no)
 
+        ## Calculate Manning's equation discharge for channel, overbank, and total
+        ht_df = subdiv_mannings_eq(ht_df)
+
+        ## Use the default discharge column when vmann is not being applied
+        ht_df['Discharge (m3s-1)_subdiv'] = np.where(
+            ht_df['subdiv_applied'] == False, ht_df['discharge_cms'], ht_df['Discharge (m3s-1)_subdiv']
+        )  # reset the discharge value back to the original if vmann=false
         ht_df['optzN_on'] = True
-        ht_df['discharge_cms'] = ht_df['Discharge(cms)_optzN']
+        ht_df['Discharge(cms)_optzN'] = ht_df['Discharge (m3s-1)_subdiv']
+        ht_df['discharge_cms'] = ht_df['Discharge (m3s-1)_subdiv']
         ht_df['channel_n'] = ht_df['manningN_ch_optz']
         ht_df['overbank_n'] = ht_df['manningN_ob_optz']
 
         ht_df1 = correct_nonmonotonic_src(ht_df)
-        ht_df2 = filter_longitudinal_discharge_jitters(fim_dir, ht_df1)
 
-        updated_hydroTables_ls.append(ht_df2)
+        updated_hydroTables_ls.append(ht_df1)
 
     return updated_hydroTables_ls
 
@@ -305,8 +335,6 @@ def create_master_metrics_df(fim_version, huc):
                                         full_json_path = os.path.join(magnitude_dir, f)
                                         if os.path.exists(full_json_path):
                                             stats_dict = json.load(open(full_json_path))
-                                            # print("checking if it does solve the json just for 1 huc or not")
-                                            # print(stats_dict)
 
                                             for metric in metrics_to_write:
                                                 sub_list_to_append.append(stats_dict[metric])
@@ -432,7 +460,6 @@ def synthesize_test_cases(huc, fim_version, hydroTable_all, job_number_branch, b
         benchmark_categories=benchmark_category,  # [benchmark_category]
         output_dir=output_dir,
     )
-    # print(hydroTable_all)
     model = "GMS"
     # job_number_huc = 1
     overwrite = True
@@ -453,40 +480,7 @@ def synthesize_test_cases(huc, fim_version, hydroTable_all, job_number_branch, b
                 verbose=verbose,
                 gms_workers=job_number_branch,
             )
-    # job_number_branch = 6
-    # Set up multiprocessor
-    # with ProcessPoolExecutor(max_workers=1) as executor:  # job_number_huc
-    #     # Loop through all test cases,
-    #     # build the alpha test arguments,
-    #     # and submit them to the process pool
-    #     executor_dict = {}
-    #     for test_case_class in all_test_cases:
-    #         if test_case_class is not None:
-    #             if not os.path.exists(test_case_class['fim_dir']):
-    #                 continue
-    #             alpha_test_args = {
-    #                 'test_case_dic': test_case_class,
-    #                 'hydroTable_all': hydroTable_all,
-    #                 'calibrated': calibrated,
-    #                 'model': model,
-    #                 'mask_type': 'huc',
-    #                 'overwrite': overwrite,
-    #                 'verbose': verbose,
-    #                 'gms_workers': job_number_branch,
-    #             }
-    #             try:
-    #                 future = executor.submit(alpha_test, **alpha_test_args)
 
-    #                 executor_dict[future] = test_case_class['test_id']
-    #             except Exception as ex:
-    #                 print(f"*** {ex}")
-    #                 traceback.print_exc()
-    #                 sys.exit(1)
-
-    # # Send the executor to the progress bar and wait for all MS tasks to finish
-    # progress_bar_handler(
-    #     executor_dict, True, f"Running {model} alpha test cases with {job_number_huc} workers"
-    # )
     metrics_df = create_master_metrics_df(fim_version, huc)
 
     print("=" * 40)
@@ -527,6 +521,7 @@ class EarlyStopper:
 def objective_function(
     mannN_coef,
     feature_ids,
+    df_bflows,
     initial_hydroTables_ls,
     fim_version,
     huc,
@@ -549,11 +544,15 @@ def objective_function(
     mannN_ob_values_ini.fill(0.120)
     mannN_ob_values = mannN_ob_values_ini * mannN_ob_coef
 
-    updated_hydroTables_ls = recalculate_Q_with_mannN_and_update_hydroTables_ls(
-        initial_hydroTables_ls, mannN_ch_values, mannN_ob_values, feature_ids, fim_dir
+    updated_hydroTables_ls = recalculate_Q_with_newMannN_and_update_hydroTables_ls(
+        initial_hydroTables_ls, mannN_ch_values, mannN_ob_values, feature_ids, df_bflows, huc
+    )
+    print(
+        f"current median discharge for the first branch: {np.median(updated_hydroTables_ls[0]['discharge_cms'])}"
     )
 
     hydroTable_all = reformat_hydroTable_for_alpha_test(updated_hydroTables_ls)
+
     output_dir = os.path.dirname(os.path.dirname(fim_dir))
 
     if bench_cat == 'ahps':
@@ -645,7 +644,10 @@ def partial_optimization_huc(
         fim_version = os.path.basename(os.path.normpath(fim_dir))
         initial_hydroTables_ls = read_initial_hydroTables(fim_dir, huc)
 
-        bounds = [(0.1, 3.0), (0.15, 2.0)]
+        bankfull_flows_file = 'inputs/rating_curve/bankfull_flows/nwm3_high_water_threshold_cms.csv'
+        df_bflows = pd.read_csv(bankfull_flows_file, dtype={'feature_id': int})
+
+        bounds = [(0.1, 2.0), (0.15, 1.7)]
 
         iteration = [0]  # Use a list to allow modification inside the callback function
 
@@ -653,6 +655,7 @@ def partial_optimization_huc(
         obj_func_partial = partial(
             objective_function,
             feature_ids=feature_ids,
+            df_bflows=df_bflows,
             initial_hydroTables_ls=initial_hydroTables_ls,
             fim_version=fim_version,
             huc=huc,
@@ -665,9 +668,9 @@ def partial_optimization_huc(
 
         cons = NonlinearConstraint(constraint1, 0, np.inf)
 
-        initial_population = [
+        initial_population = [  # Your original guess
             [1.0, 1.0],
-            [0.4, 0.7],  # Your original guess
+            [0.4, 0.7],
             [0.9, 0.9],
             [1.0, 0.5],
             [1.0, 1.5],
@@ -675,16 +678,12 @@ def partial_optimization_huc(
             [0.5, 1.5],
             [0.5, 1.0],
             [0.5, 0.5],
-            [1.0, 1.9],
-            [1.9, 1.0],
-            [0.2, 1.9],
             [0.2, 1.0],
             [0.2, 0.2],
             [0.16, 0.5],
             [0.16, 1.0],
             [0.16, 0.8],
-            # [1.0, 0.9], [1.0, 1.1], [1.1, 0.9], [1.1, 1.0], [1.1, 1.1],
-            # [0.9, 1.1], [0.9, 1.0], [1.5, 1.5], [1.9, 1.9],
+            [0.16, 1.5],
         ]
 
         # Fill the rest of the population with random values
