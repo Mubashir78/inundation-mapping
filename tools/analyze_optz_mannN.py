@@ -8,8 +8,8 @@ import pandas as pd
 
 # *********************************************************
 runoff_clusters_path = "/home/rdp-user/outputs/roughness_optz_v3/outputs/optz_analysis/runoff_clusters/recurrence_flows_nwm_v3_CONUS_100_interval_added_clusters.csv"              
-# nwm_streams_path = "/efs-drives/fim-dev-efs/fim-data/inputs/nwm_hydrofabric/nwm_flows_20250328.gpkg"
 pre_clip_huc8_path = "/efs-drives/fim-dev-efs/fim-data/inputs/pre_clip_huc8/20251209/"
+analysis_dir = "/home/rdp-user/outputs/roughness_optz_v3/outputs/optz_analysis/"
 
 # nwm_runoff_efficiency_clusters
 runoff_clusters_df = pd.read_csv(runoff_clusters_path)
@@ -19,32 +19,43 @@ runoff_clusters_df = runoff_clusters_df[['feature_id', 'runoff_cluster_idx']]
 # Calculating avegare roughness values for each sites per cluster
 optz_roughness_huc_fid_cluster_ls = []
 avg_optz_roughness_cluster_ls = []
-for site in ['ahps', 'ble']:
+for site in ['ahps']: #, 'ble']:
 
-    analysis_dir = f"/home/rdp-user/outputs/roughness_optz_v3/outputs/optz_analysis/{site}/"
+    site_dir = join(analysis_dir, site)
     pattern = "optz_iteration_metrics_" + "*.csv"  # Match all csv files
-    optz_paths = glob.glob(join(analysis_dir, pattern))
+    optz_paths = glob.glob(join(site_dir, pattern))
 
     indx=range(len(optz_paths))
     optz_roughness_df = pd.DataFrame(index = indx, 
-        columns =['huc', 'min_loss', 'channel_n', 'overbank_n', 'channel_n_1p', 'overbank_n_1p'])
+        columns =['huc', 'lid#', 'lid_mag#', 'min_loss', 'channel_n', 'overbank_n', 'channel_n_1p', 'overbank_n_1p'])
     i = 0
     for optz_csv in optz_paths:
 
         optz_huc_df = pd.read_csv(optz_csv, dtype={'huc': str})
-        optz_huc_df_process = optz_huc_df[['huc', 'iteration', 'total_loss', 'mannN_ch_coef', 'mannN_ob_coef', 'mannN_ch', 'mannN_ob']]
+        optz_huc_df_process = optz_huc_df[['huc', 'nws_lid', 'magnitude', 'iteration', 'total_loss', 'mannN_ch_coef', 'mannN_ob_coef', 'mannN_ch', 'mannN_ob']]
+                
+        # Find the number of lids (sites) and magnitudes
+        if site == 'ahps':
+            lid_mag = optz_huc_df_process[optz_huc_df_process['iteration'] == 0]['nws_lid']
+            lid_mag_num = len(lid_mag)
+            lid_num = len(lid_mag.drop_duplicates(keep='first'))
+        else:
+            lid_mag_num = 2
+            lid_num = 1
+        
         optz_huc_dd_df = optz_huc_df_process.drop_duplicates(subset=['iteration'], keep='first')
         optz_huc_dd_df.reset_index(inplace=True)
-
         cols = ['mannN_ch', 'mannN_ob']
         optz_huc_dd_df = optz_huc_dd_df.copy()
         optz_huc_dd_df[cols] = optz_huc_dd_df[cols].astype(float).round(4)
 
+        # Find the minimum loss
         min_loss = min(optz_huc_dd_df['total_loss'])
         optz_rows_df = optz_huc_dd_df[optz_huc_dd_df['total_loss'] == min_loss]
-        optz_ch_n = np.mean(optz_rows_df['mannN_ch'])
-        optz_ob_n = np.mean(optz_rows_df['mannN_ob'])
+        optz_ch_n = np.mean(optz_rows_df['mannN_ch']).round(4)
+        optz_ob_n = np.mean(optz_rows_df['mannN_ob']).round(4)
 
+        # Find the minimum 1 percentile loss
         min_loss_1perc = min_loss * 1.01
         optz_1perc_df = optz_huc_dd_df[optz_huc_dd_df['total_loss'] <= min_loss_1perc]
         optz_1perc_dd_df = optz_1perc_df.drop_duplicates(subset=['mannN_ch'], keep='first')
@@ -55,14 +66,17 @@ for site in ['ahps', 'ble']:
         huc = str(optz_huc_df['huc'][0])
         huc = huc.zfill(8)
         optz_roughness_df.loc[i, "huc"] = huc
+        optz_roughness_df.loc[i, "lid#"] = lid_num
+        optz_roughness_df.loc[i, "lid_mag#"] = lid_mag_num
         optz_roughness_df.loc[i, "min_loss"] = min_loss
         optz_roughness_df.loc[i, "channel_n"] = optz_ch_n
         optz_roughness_df.loc[i, "overbank_n"] = optz_ob_n
         optz_roughness_df.loc[i, "channel_n_1p"] = optz_ch_n_1p
         optz_roughness_df.loc[i, "overbank_n_1p"] = optz_ob_n_1p
 
-        i = i+1    
-
+        i = i+1
+    #optz_roughness_df.to_csv(join(analysis_dir,f'optz_roughness_huc_{site}.csv'), index=False)
+    
     nwm_streams_hucs_df = pd.DataFrame(columns =['huc', 'feature_id', 'order_'])
     for huc in optz_roughness_df['huc']:
         nwm_streams_huc8_path = join(pre_clip_huc8_path, huc, 'nwm_subset_streams.gpkg')
@@ -73,23 +87,33 @@ for site in ['ahps', 'ble']:
         nwm_streams.rename(columns={'ID': 'feature_id'}, inplace = True)
         nwm_streams_hucs_df = pd.concat([nwm_streams_hucs_df, nwm_streams], axis = 0)
 
-    nwm_streams_hucs_df.reset_index().drop_duplicates(subset=['feature_id'], keep='first')
+    nwm_streams_hucs_df.reset_index(inplace=True) #.drop_duplicates(subset=['feature_id'], keep='first')
 
     # merge with nwm_streams
     optz_roughness_df = optz_roughness_df.copy()
     optz_roughness_huc_fid_df = optz_roughness_df.merge(nwm_streams_hucs_df, left_on="huc", right_on="huc", how="inner")
-
+    optz_roughness_huc_fid_df = optz_roughness_huc_fid_df.groupby()
     # merge with nwm_runoff_efficiency_clusters
     optz_roughness_huc_fid_cluster_df = optz_roughness_huc_fid_df.merge(
         runoff_clusters_df, left_on="feature_id", right_on="feature_id", how="inner")
-    optz_roughness_huc_fid_cluster_df.to_csv(join(analysis_dir,f'optz_roughness_huc_fid_cluster_{site}.csv'))
-    optz_roughness_huc_fid_cluster_ls.append(optz_roughness_huc_fid_cluster_df)
+    #optz_roughness_huc_fid_cluster_df.to_csv(join(analysis_dir,f'optz_roughness_huc_fid_cluster_{site}.csv'), index=False)
+    # optz_roughness_huc_fid_cluster_ls.append(optz_roughness_huc_fid_cluster_df)
 
-    # average by clusters
+    # group by huc and clusters
+    optz_roughness_huc_cluster_df = optz_roughness_huc_fid_cluster_df.drop_duplicates(subset= ['huc'], keep='first')
+    optz_roughness_huc_cluster_df.to_csv(join(analysis_dir,f'optz_roughness_huc_cluster_{site}.csv'))
+
+    # average by cluster
+    sum_sites_cluster_df = optz_roughness_huc_cluster_df.groupby(
+        "runoff_cluster_idx")['lid#', 'lid_mag#'].sum()
     avg_optz_roughness_cluster_df = optz_roughness_huc_fid_cluster_df.groupby(
         "runoff_cluster_idx")['channel_n', 'overbank_n', 'channel_n_1p','overbank_n_1p'].mean()
+    avg_optz_roughness_cluster_df['lid#'] = 0
+    avg_optz_roughness_cluster_df['lid_mag#'] = 0
+    avg_optz_roughness_cluster_df.update(sum_sites_cluster_df[['lid#', 'lid_mag#']])
+
     avg_optz_roughness_cluster_ls.append(avg_optz_roughness_cluster_df)
-    avg_optz_roughness_cluster_df.to_csv(join(analysis_dir,f'optz_roughness_cluster_{site}.csv'))
+    #avg_optz_roughness_cluster_df.to_csv(join(analysis_dir,f'optz_roughness_cluster_{site}.csv'))
 
 # ---------------------------------------------------------------------------------
 # Create optz_global_mannings
