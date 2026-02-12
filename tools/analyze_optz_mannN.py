@@ -17,7 +17,7 @@ runoff_clusters_df = runoff_clusters_df.copy()
 runoff_clusters_df = runoff_clusters_df[['feature_id', 'runoff_cluster_idx']]
 
 # Calculating avegare roughness values for each sites per cluster
-for site in ['ahps']: # , 'ble']:
+for site in ['ahps', 'ble']: # 
 
     site_dir = join(analysis_dir, site)
     pattern = "optz_iteration_metrics_" + "*.csv"  # Match all csv files
@@ -27,7 +27,7 @@ for site in ['ahps']: # , 'ble']:
     optz_roughness_df = pd.DataFrame(index = indx, 
         columns =['huc', 'lid#', 'lid_mag#', 'min_loss', 'channel_n', 'overbank_n', 'channel_n_1p', 'overbank_n_1p'])
     i = 0
-    for optz_csv in optz_paths: # [0:10]
+    for optz_csv in optz_paths:
 
         optz_huc_df = pd.read_csv(optz_csv, dtype={'huc': str})
         optz_huc_df_process = optz_huc_df[['huc', 'nws_lid', 'magnitude', 'iteration', 'total_loss', 'mannN_ch_coef', 'mannN_ob_coef', 'mannN_ch', 'mannN_ob']]
@@ -93,7 +93,7 @@ for site in ['ahps']: # , 'ble']:
     optz_roughness_huc_fid_cluster_df = optz_roughness_huc_fid_df.merge(
         runoff_clusters_df, on="feature_id", how="left")
     optz_roughness_huc_fid_cluster_df['runoff_cluster_idx'] = optz_roughness_huc_fid_cluster_df['runoff_cluster_idx'].astype('Int64')
-    optz_roughness_huc_fid_cluster_df.to_csv(join(analysis_dir,f'optz_roughness_huc_fid_cluster_{site}.csv'))
+    optz_roughness_huc_fid_cluster_df.to_csv(join(analysis_dir, f'optz_roughness_huc_fid_cluster_{site}.csv'))
 
     # average roughness by cluster
     avg_optz_roughness_cluster_df = optz_roughness_huc_fid_cluster_df.groupby(
@@ -137,7 +137,7 @@ mannings_global_06_12 = pd.read_csv(join(mannings_path, 'mannings_global_06_12.c
 
 # merge with runoff clusters
 mannings_global_06_12_clusters_df = mannings_global_06_12.merge(
-        runoff_clusters_df, left_on="feature_id", right_on="feature_id", how="inner")
+        runoff_clusters_df, on="feature_id", how="left")
 
 # merge with global nwm_streams
 nwm_streams_path = "/efs-drives/fim-dev-efs/fim-data/inputs/nwm_hydrofabric/nwm_flows_20250328.gpkg"
@@ -147,11 +147,13 @@ nwm_streams_conus = nwm_streams_conus[['ID', 'order_']]
 nwm_streams_conus.rename(columns={'ID': 'feature_id'}, inplace = True)
 
 mannings_global_06_12_clusters_nwm_streams_df = mannings_global_06_12_clusters_df.merge(
-        nwm_streams_conus, left_on="feature_id", right_on="feature_id", how="inner")
+        nwm_streams_conus, on="feature_id", how="left")
 mannings_global_06_12_clusters_nwm_streams_df.drop(
     columns={'channel_n', 'overbank_n'},
     inplace = True
     )
+# mannings_global_06_12_clusters_nwm_streams_df["runoff_cluster_idx"] = mannings_global_06_12_clusters_nwm_streams_df["runoff_cluster_idx"].astype('Int64')
+# mannings_global_06_12_clusters_nwm_streams_df["order_"] = mannings_global_06_12_clusters_nwm_streams_df["order_"].astype('Int64')
 
 # read optimized roughness based on stream order
 optz_roughness_order_path = '/home/rdp-user/outputs/roughness_optz_v3/outputs/optz_analysis/' #mannings_global_optz_alleg.csv'
@@ -160,7 +162,7 @@ optz_roughness_order_df = pd.read_csv(join(optz_roughness_order_path, 'optz_roug
 mannings_global_optz_clusters_nwm_streams_df = mannings_global_06_12_clusters_nwm_streams_df.merge(
         optz_roughness_order_df,
         on=["runoff_cluster_idx", "order_"],
-        how="inner"
+        how="left"
         )
 mannings_global_optz_clusters_nwm_streams_df = mannings_global_optz_clusters_nwm_streams_df.fillna(
     {'channel_n': 0.06, 'overbank_n': 0.12}
@@ -189,11 +191,11 @@ mannings_global_optz_clusters_nwm_streams_df.update(featureIDs_2change_df[cols_t
 mannings_global_optz_clusters_nwm_streams_df = mannings_global_optz_clusters_nwm_streams_df.reset_index()
 featureIDs_2change_df = featureIDs_2change_df.reset_index()
 # global_manning_df[global_manning_df["feature_id"].isin(featureIDs_2change_df["feature_id"])]
-mannings_global_optz_clusters_nwm_streams_df.to_csv(join(optz_roughness_order_path,'mannings_global_optz_order_cluster_v3.csv'), index=False)
+mannings_global_optz_clusters_nwm_streams_df.to_csv(join(optz_roughness_order_path,'mannings_global_optz_order_cluster_v3f.csv'), index=False)
 
 # create the final csv
 mannings_global_optz_df = mannings_global_optz_clusters_nwm_streams_df.drop(columns=['order_', 'runoff_cluster_idx'])
-mannings_global_optz_df.to_csv(join(optz_roughness_order_path,'mannings_global_optz_v3.csv'), index=False)
+mannings_global_optz_df.to_csv(join(optz_roughness_order_path,'mannings_global_optz_v3f.csv'), index=False)
 
 mannings_global_optz_clusters_nwm_streams_df[mannings_global_optz_clusters_nwm_streams_df['feature_id'] == 10109577]
 
